@@ -8,6 +8,8 @@ playgrounds/
   scripts/     one script per setup, named like its manifest: <total VMs>vm-<OS>-<spec>
 ```
 
+Every script sets each playground to a 24 hour lifetime and makes it persistent, so disks survive a stop. Running `up` again restarts stopped playgrounds and reconnects them. The public URL changes after a restart.
+
 | Script | Manifest | What it builds |
 | --- | --- | --- |
 | `5vm-ubuntu26-4c-10g-os20g-data80g.sh` | `5vm-ubuntu26-4c-10g-os20g-data80g.yaml` | Five single-VM playgrounds on one private network, with optional k3s |
