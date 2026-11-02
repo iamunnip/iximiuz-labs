@@ -10,7 +10,8 @@
 #   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh status       list the vms and the public url
 #   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh down         destroy the vms and their data
 #
-# every command except down is safe to re-run.
+# every command except down is safe to re-run. up also restarts stopped playgrounds and
+# reconnects them. a restart loses the public port, so the public url changes.
 set -euo pipefail
 
 manifest="$(dirname "$0")/../manifests/15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.yaml"
@@ -21,6 +22,7 @@ port=8080 # fixed: public tcp port on node-01-vm-01, vpn udp port on every vm
 iface=mesh0
 wstunnel_version=11.1.0
 k3s_data=/data/k3s
+lifetime=24h # the longest a playground can run
 parallel=5 # ssh sessions at once, labctl only allows a small number
 
 plays=() nodes=()
@@ -36,12 +38,28 @@ first_machine=${machines[0]}
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-declare -A ids
+declare -A ids stopped
 
-load_ids() { # remember the ids of running playgrounds, by title
-  ids=()
-  local id title
-  while read -r id title; do ids[$title]=$id; done < <(labctl playground list | awk '/RUNNING/ { print $1, $3 }')
+list_plays() { # print "<id> <title> <RUNNING|STOPPED|BUSY>" for this setup, destroyed ones are left out
+  labctl playground list | awk -v p="^$prefix-[0-9]+\$" 'NR > 1 && $3 ~ p {
+    if (/DESTROYED|TERMINATED|FAILED/) next
+    print $1, $3, (/RUNNING/ ? "RUNNING" : /STOPPED/ ? "STOPPED" : "BUSY")
+  }'
+}
+load_ids() { # remember the ids of running and stopped playgrounds, by title
+  local rows id title state _
+  for _ in {1..60}; do # a playground that is stopping must not look like a missing one
+    rows=$(list_plays)
+    grep -q ' BUSY$' <<<"$rows" || break
+    log "waiting for playgrounds that are changing state"
+    sleep 3
+  done
+  ! grep ' BUSY$' <<<"$rows" >&2 || { log "playgrounds above are stuck, try again later"; exit 1; }
+  ids=() stopped=()
+  while read -r id title state; do
+    [[ -n $id ]] || continue
+    if [[ $state == RUNNING ]]; then ids[$title]=$id; else stopped[$title]=$id; fi
+  done <<<"$rows"
 }
 vpn_ip() { echo "10.8.0.$(($1 + 1))"; } # by index, node-01-vm-01 is 10.8.0.1
 on() { # run the script on stdin as root on a node, named <play>-<machine>
@@ -86,11 +104,25 @@ start_vms() {
     fi
     throttle
     {
-      log "$play: started ($(labctl playground start flexbox -f "$manifest" --title "$play" --quiet))" || : >"$tmp/failed"
+      if [[ -n ${stopped[$play]:-} ]]; then
+        labctl playground restart "${stopped[$play]}" >/dev/null 2>&1 && log "$play: restarted (${stopped[$play]})"
+      else
+        log "$play: started ($(labctl playground start flexbox -f "$manifest" --title "$play" --quiet))"
+      fi || : >"$tmp/failed"
     } &
   done
   wait_all
   load_ids
+
+  # keep the vms for 24 hours and keep their disks when stopped. both are safe to repeat.
+  for play in "${plays[@]}"; do
+    {
+      labctl playground lifetime "${ids[$play]}" "$lifetime" >/dev/null 2>&1 &&
+        labctl playground persist "${ids[$play]}" >/dev/null 2>&1 || : >"$tmp/failed"
+    } &
+  done
+  wait_all
+  log "all playgrounds: lifetime $lifetime, persistent"
 }
 
 public_url() {
@@ -244,7 +276,7 @@ install_k3s() {
   token=$(on "$first" <<SCRIPT | tail -1
 set -euo pipefail
 if ! systemctl is-active -q k3s; then
-  curl -fsSL https://get.k3s.io | INSTALL_K3S_EXEC="server --node-ip $(vpn_ip 0) --advertise-address $(vpn_ip 0) --flannel-iface $iface --data-dir $k3s_data --write-kubeconfig-mode 644 --disable traefik --disable servicelb" sh - >/dev/null 2>&1
+  curl -fsSL https://get.k3s.io | INSTALL_K3S_EXEC="server --node-name $first --node-ip $(vpn_ip 0) --advertise-address $(vpn_ip 0) --flannel-iface $iface --data-dir $k3s_data --write-kubeconfig-mode 644 --disable traefik --disable servicelb" sh - >/dev/null 2>&1
 fi
 for _ in \$(seq 1 60); do [[ -s $k3s_data/server/node-token ]] && break; sleep 2; done
 cat $k3s_data/server/node-token
@@ -255,7 +287,7 @@ SCRIPT
     on_bg "$node" <<SCRIPT
 set -euo pipefail
 if ! systemctl is-active -q k3s-agent; then
-  curl -fsSL https://get.k3s.io | K3S_URL=https://$(vpn_ip 0):6443 K3S_TOKEN=$token INSTALL_K3S_EXEC="agent --node-ip $(vpn_ip "$i") --flannel-iface $iface --data-dir $k3s_data" sh - >/dev/null 2>&1
+  curl -fsSL https://get.k3s.io | K3S_URL=https://$(vpn_ip 0):6443 K3S_TOKEN=$token INSTALL_K3S_EXEC="agent --node-name $node --node-ip $(vpn_ip "$i") --flannel-iface $iface --data-dir $k3s_data" sh - >/dev/null 2>&1
 fi
 SCRIPT
   done
@@ -277,14 +309,14 @@ status() {
 }
 
 down() {
-  local play
+  local id title state
   load_ids
-  for play in "${plays[@]}"; do
-    [[ -n ${ids[$play]:-} ]] || continue
+  while read -r id title state; do
+    [[ -n $id ]] || continue
     {
-      labctl playground destroy "${ids[$play]}" >/dev/null && log "$play: destroyed (${ids[$play]})"
+      labctl playground destroy "$id" >/dev/null 2>&1 && log "$title: destroyed ($id)"
     } &
-  done
+  done <<<"$(list_plays)"
   wait
 }
 
@@ -295,6 +327,6 @@ case "${1:-}:${2:-}" in
   check:) require_running; check ;;
   status:) status ;;
   down:) down ;;
-  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
 [[ ${1:-} != up ]] || log "done in ${SECONDS}s"
