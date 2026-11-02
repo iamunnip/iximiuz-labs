@@ -1,6 +1,6 @@
 # one ubuntu 26.04 vm: 4 vcpu, 10 GiB ram, 20 GiB os disk, 80 GiB data disk on /data.
 kind: playground
-name: ubuntu26-4c-10g-os20g-data80g
+name: 5vm-ubuntu26-4c-10g-os20g-data80g
 title: Ubuntu 26.04, 4 vCPU, 10 GiB RAM, 20+80 GiB disks
 description: Single Ubuntu 26.04 VM with 4 vCPU, 10 GiB RAM, a 20 GiB OS disk and an 80 GiB data disk mounted on /data.
 playground:

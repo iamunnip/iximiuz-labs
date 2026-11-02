@@ -1,57 +1,91 @@
 #!/usr/bin/env bash
-# five single-vm playgrounds, cluster-01 to cluster-05, joined into one private network.
+# five single-vm playgrounds, node-01 to node-05, joined into one private network.
 # playgrounds share no network and can only expose http(s) ports, so the vpn runs through
-# a websocket tunnel on a public port of cluster-01, and all traffic between vms goes via it.
+# a websocket tunnel on a public port of node-01, and all traffic between vms goes via it.
 #
 # usage:
-#   ubuntu26-4c-10g-os20g-data80g.sh up [--k3s]   start the vms and connect them, optionally install k3s
-#   ubuntu26-4c-10g-os20g-data80g.sh k3s          install k3s on running vms
-#   ubuntu26-4c-10g-os20g-data80g.sh check        test that every vm reaches every other vm
-#   ubuntu26-4c-10g-os20g-data80g.sh status       list the vms and the public url
-#   ubuntu26-4c-10g-os20g-data80g.sh down         destroy the vms and their data
+#   5vm-ubuntu26-4c-10g-os20g-data80g.sh up [--k3s]   start the vms and connect them, optionally install k3s
+#   5vm-ubuntu26-4c-10g-os20g-data80g.sh k3s          install k3s on running vms
+#   5vm-ubuntu26-4c-10g-os20g-data80g.sh check        test the network from the first and the last vm
+#   5vm-ubuntu26-4c-10g-os20g-data80g.sh status       list the vms and the public url
+#   5vm-ubuntu26-4c-10g-os20g-data80g.sh down         destroy the vms and their data
 #
 # every command except down is safe to re-run.
 set -euo pipefail
 
-manifest="$(dirname "$0")/../manifests/ubuntu26-4c-10g-os20g-data80g.yaml"
-prefix=cluster
+manifest="$(dirname "$0")/../manifests/5vm-ubuntu26-4c-10g-os20g-data80g.yaml"
+prefix=node
 count=5
 machine=vm
-port=8080 # fixed: public tcp port on cluster-01, vpn udp port on every vm
+port=8080 # fixed: public tcp port on node-01, vpn udp port on every vm
 iface=mesh0
 wstunnel_version=11.1.0
 k3s_data=/data/k3s
+parallel=5 # ssh sessions at once, labctl only allows a small number
 
 nodes=()
 for ((i = 1; i <= count; i++)); do nodes+=("$(printf '%s-%02d' "$prefix" "$i")"); done
 first=${nodes[0]}
 
-play_id() { labctl playground list | awk -v t="$1" '$3 == t && /RUNNING/ { print $1; exit }'; }
-vpn_ip() { echo "10.8.0.$(($1 + 1))"; } # by index, cluster-01 is 10.8.0.1
-on() { labctl ssh "$(play_id "$1")" -- sudo bash -s; } # run the script on stdin as root
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+declare -A ids
+
+load_ids() { # remember the ids of running playgrounds, by title
+  ids=()
+  local id title
+  while read -r id title; do ids[$title]=$id; done < <(labctl playground list | awk '/RUNNING/ { print $1, $3 }')
+}
+vpn_ip() { echo "10.8.0.$(($1 + 1))"; } # by index, node-01 is 10.8.0.1
+on() { labctl ssh "${ids[$1]}" -- sudo bash -s; } # run the script on stdin as root
+throttle() { while (($(jobs -rp | wc -l) >= parallel)); do wait -n || true; done; }
+on_bg() { # like on, but in the background. usage: on_bg <node> [output file]
+  local node=$1 out=${2:-} script
+  script=$(cat)
+  throttle
+  {
+    local try
+    for try in 1 2 3; do # an ssh session can drop, the scripts are safe to repeat
+      if [[ -n $out ]]; then on "$node" <<<"$script" >"$out"; else on "$node" <<<"$script" >&2; fi && exit 0
+      log "$node: attempt $try failed"
+      sleep 3
+    done
+    : >"$tmp/failed"
+  } &
+}
+wait_all() { # wait for background jobs, stop if any of them failed
+  wait
+  [[ ! -e $tmp/failed ]] || { log "stopping, see the failures above"; exit 1; }
+}
 log() { echo "$*" >&2; }
 
 require_running() {
   local node
+  load_ids
   for node in "${nodes[@]}"; do
-    [[ -n $(play_id "$node") ]] || { log "$node is not running, run: $0 up"; exit 1; }
+    [[ -n ${ids[$node]:-} ]] || { log "$node is not running, run: $0 up"; exit 1; }
   done
 }
 
 start_vms() {
-  local node id
+  local node
+  load_ids
   for node in "${nodes[@]}"; do
-    id=$(play_id "$node")
-    if [[ -n $id ]]; then
-      log "$node: already running ($id)"
-    else
-      log "$node: started ($(labctl playground start flexbox -f "$manifest" --title "$node" --quiet))"
+    if [[ -n ${ids[$node]:-} ]]; then
+      log "$node: already running (${ids[$node]})"
+      continue
     fi
+    throttle
+    {
+      log "$node: started ($(labctl playground start flexbox -f "$manifest" --title "$node" --quiet))" || : >"$tmp/failed"
+    } &
   done
+  wait_all
+  load_ids
 }
 
 public_url() {
-  labctl expose list "$(play_id "$first")" --kind port |
+  labctl expose list "${ids[$first]}" --kind port |
     awk -v t="http://$machine:$port" '$2 == t { print $3; exit }'
 }
 
@@ -61,8 +95,7 @@ connect_vms() {
 
   # the private key stays on the vm, only the public key comes back.
   for node in "${nodes[@]}"; do
-    log "$node: installing packages"
-    pubkeys[$node]=$(on "$node" <<SCRIPT | tail -1
+    on_bg "$node" "$tmp/$node.pubkey" <<SCRIPT
 set -euo pipefail
 hostnamectl set-hostname $node
 grep -q ' $node\$' /etc/hosts || echo "127.0.1.1 $node" >> /etc/hosts
@@ -83,12 +116,13 @@ mkdir -p /etc/wireguard
 [[ -s /etc/wireguard/private.key ]] || wg genkey > /etc/wireguard/private.key
 wg pubkey < /etc/wireguard/private.key
 SCRIPT
-    )
   done
+  wait_all
+  for node in "${nodes[@]}"; do pubkeys[$node]=$(tail -1 "$tmp/$node.pubkey"); done
 
   # expose the port once, a re-run reuses the same url.
   url=$(public_url)
-  [[ -n $url ]] || url=$(labctl expose port "$(play_id "$first")" "$port" --machine "$machine" --public | tail -1)
+  [[ -n $url ]] || url=$(labctl expose port "${ids[$first]}" "$port" --machine "$machine" --public | tail -1)
   log "public url: $url"
 
   for i in "${!nodes[@]}"; do hosts+="$(vpn_ip "$i") ${nodes[$i]} # $prefix"$'\n'; done
@@ -111,7 +145,6 @@ $hosts
 HOSTS
 "
 
-  log "$first: configuring"
   on "$first" <<SCRIPT
 set -euo pipefail
 echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-vpn.conf
@@ -144,8 +177,7 @@ SCRIPT
 
   for ((i = 1; i < count; i++)); do
     node=${nodes[$i]}
-    log "$node: configuring"
-    on "$node" <<SCRIPT
+    on_bg "$node" <<SCRIPT
 set -euo pipefail
 cat > /etc/systemd/system/tunnel.service <<UNIT
 [Unit]
@@ -176,32 +208,34 @@ CONF
 $finish
 SCRIPT
   done
+  wait_all
 }
 
 check() {
-  local node failed=0
-  for node in "${nodes[@]}"; do
-    on "$node" <<SCRIPT || failed=1
-rc=0
-for target in ${nodes[*]}; do
-  [[ \$target == $node ]] && continue
-  if ping -c 2 -W 5 "\$target" >/dev/null 2>&1; then r=ok; else r=FAILED; rc=1; fi
-  echo "$node -> \$target: \$r"
-done
-exit \$rc
+  local node
+  for node in "$first" "${nodes[-1]}"; do
+    on_bg "$node" <<SCRIPT
+failed=\$(
+  for target in ${nodes[*]}; do
+    [[ \$target == $node ]] && continue
+    ping -c 1 -w 20 "\$target" >/dev/null 2>&1 || echo "$node -> \$target: FAILED" &
+  done
+  wait
+)
+[[ -z \$failed ]] || { echo "\$failed"; exit 1; }
 SCRIPT
   done
-  [[ $failed == 0 ]] || { log "some vms cannot reach each other"; return 1; }
+  wait_all
   log "all $count vms connected"
 }
 
 install_k3s() {
   local node i token
-  log "$first: installing k3s server"
+  log "installing k3s"
   token=$(on "$first" <<SCRIPT | tail -1
 set -euo pipefail
 if ! systemctl is-active -q k3s; then
-  curl -fsSL https://get.k3s.io | INSTALL_K3S_EXEC="server --node-ip $(vpn_ip 0) --advertise-address $(vpn_ip 0) --flannel-iface $iface --data-dir $k3s_data --write-kubeconfig-mode 644" sh - >/dev/null 2>&1
+  curl -fsSL https://get.k3s.io | INSTALL_K3S_EXEC="server --node-ip $(vpn_ip 0) --advertise-address $(vpn_ip 0) --flannel-iface $iface --data-dir $k3s_data --write-kubeconfig-mode 644 --disable traefik --disable servicelb" sh - >/dev/null 2>&1
 fi
 for _ in \$(seq 1 60); do [[ -s $k3s_data/server/node-token ]] && break; sleep 2; done
 cat $k3s_data/server/node-token
@@ -209,14 +243,14 @@ SCRIPT
   )
   for ((i = 1; i < count; i++)); do
     node=${nodes[$i]}
-    log "$node: installing k3s agent"
-    on "$node" <<SCRIPT
+    on_bg "$node" <<SCRIPT
 set -euo pipefail
 if ! systemctl is-active -q k3s-agent; then
   curl -fsSL https://get.k3s.io | K3S_URL=https://$(vpn_ip 0):6443 K3S_TOKEN=$token INSTALL_K3S_EXEC="agent --node-ip $(vpn_ip "$i") --flannel-iface $iface --data-dir $k3s_data" sh - >/dev/null 2>&1
 fi
 SCRIPT
   done
+  wait_all
   on "$first" <<SCRIPT
 for _ in \$(seq 1 90); do
   [[ \$(k3s kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready') == $count ]] && break
@@ -229,17 +263,20 @@ SCRIPT
 
 status() {
   labctl playground list | awk -v p="^$prefix-[0-9]+\$" 'NR == 1 || $3 ~ p' | cut -c1-100
-  [[ -z $(play_id "$first") ]] || echo "public url: $(public_url)"
+  load_ids
+  [[ -z ${ids[$first]:-} ]] || echo "public url: $(public_url)"
 }
 
 down() {
-  local node id
+  local node
+  load_ids
   for node in "${nodes[@]}"; do
-    id=$(play_id "$node")
-    [[ -n $id ]] || continue
-    labctl playground destroy "$id" >/dev/null
-    log "$node: destroyed ($id)"
+    [[ -n ${ids[$node]:-} ]] || continue
+    {
+      labctl playground destroy "${ids[$node]}" >/dev/null && log "$node: destroyed (${ids[$node]})"
+    } &
   done
+  wait
 }
 
 case "${1:-}:${2:-}" in
@@ -251,3 +288,4 @@ case "${1:-}:${2:-}" in
   down:) down ;;
   *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
+[[ ${1:-} != up ]] || log "done in ${SECONDS}s"
