@@ -1,0 +1,69 @@
+# three ubuntu 26.04 vms, 80 GiB disk each. totals: 10 vcpu, 16 GiB ram, 240 GiB disk.
+# these totals are the per playground limits. 100 GiB per vm is rejected, as 300 GiB is over the 240 GiB limit.
+kind: playground
+name: ubuntu26-3vm-4c6g-4c6g-2c4g-80g
+title: Ubuntu 26.04, 3 VMs, 10 vCPU, 16 GiB RAM, 240 GiB disk
+description: Three Ubuntu 26.04 VMs with 80 GiB disks. Two have 4 vCPU and 6 GiB RAM, one has 2 vCPU and 4 GiB RAM.
+playground:
+  networks:
+    - name: local
+      subnet: 172.16.0.0/24
+  machines:
+    - name: vm-01
+      users:
+        - name: root
+        - name: laborant
+          default: true
+      drives:
+        - source: ubuntu-26-04
+          mount: /
+          size: 80GiB
+      network:
+        interfaces:
+          - network: local
+      resources:
+        cpuCount: 4
+        ramSize: 6GiB
+    - name: vm-02
+      users:
+        - name: root
+        - name: laborant
+          default: true
+      drives:
+        - source: ubuntu-26-04
+          mount: /
+          size: 80GiB
+      network:
+        interfaces:
+          - network: local
+      resources:
+        cpuCount: 4
+        ramSize: 6GiB
+    - name: vm-03
+      users:
+        - name: root
+        - name: laborant
+          default: true
+      drives:
+        - source: ubuntu-26-04
+          mount: /
+          size: 80GiB
+      network:
+        interfaces:
+          - network: local
+      resources:
+        cpuCount: 2
+        ramSize: 4GiB
+  tabs:
+    - id: terminal-vm-01
+      kind: terminal
+      name: vm-01
+      machine: vm-01
+    - id: terminal-vm-02
+      kind: terminal
+      name: vm-02
+      machine: vm-02
+    - id: terminal-vm-03
+      kind: terminal
+      name: vm-03
+      machine: vm-03
