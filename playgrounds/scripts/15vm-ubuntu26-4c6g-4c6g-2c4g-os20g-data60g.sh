@@ -7,11 +7,13 @@
 #   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh up [--k3s]   start the vms and connect them, optionally install k3s
 #   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh k3s          install k3s on running vms
 #   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh check        test the network from the first and the last vm
-#   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh status       list the vms and the public url
-#   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh down         destroy the vms and their data
+#   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh status       show the vms and how to connect to the control plane
+#   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh down         stop the vms and keep their disks
+#   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh restart      start stopped vms and reconnect them
+#   15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.sh destroy      delete the vms and their data
 #
-# every command except down is safe to re-run. up also restarts stopped playgrounds and
-# reconnects them. a restart loses the public port, so the public url changes.
+# every command except destroy is safe to re-run. a restart loses the public port, so the
+# public url changes, and restart updates the vms with the new one.
 set -euo pipefail
 
 manifest="$(dirname "$0")/../manifests/15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g.yaml"
@@ -91,6 +93,14 @@ require_running() {
   load_ids
   for play in "${plays[@]}"; do
     [[ -n ${ids[$play]:-} ]] || { log "$play is not running, run: $0 up"; exit 1; }
+  done
+}
+
+require_existing() {
+  local item
+  load_ids
+  for item in "${plays[@]}"; do
+    [[ -n ${ids[$item]:-}${stopped[$item]:-} ]] || { log "$item does not exist, run: $0 up"; exit 1; }
   done
 }
 
@@ -297,18 +307,42 @@ for _ in \$(seq 1 90); do
   [[ \$(k3s kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready') == $count ]] && break
   sleep 2
 done
+k3s kubectl label node ${nodes[*]:1} node-role.kubernetes.io/node= --overwrite >/dev/null
 k3s kubectl get nodes -o wide
 [[ \$(k3s kubectl get nodes --no-headers | grep -c ' Ready') == $count ]]
 SCRIPT
 }
 
 status() {
-  labctl playground list | awk -v p="^$prefix-[0-9]+\$" 'NR == 1 || $3 ~ p' | cut -c1-100
+  local ssh_cmd
+  labctl playground list | awk -v p="^$prefix-[0-9]+\$" 'NR == 1 || ($3 ~ p && !/DESTROYED/)' | cut -c1-100
   load_ids
-  [[ -z ${ids[$first_play]:-} ]] || echo "public url: $(public_url)"
+  if [[ -z ${ids[$first_play]:-} ]]; then
+    if [[ -n ${stopped[$first_play]:-} ]]; then echo "stopped, run: $0 restart"; else echo "not created, run: $0 up"; fi
+    return
+  fi
+  ssh_cmd="labctl ssh ${ids[$first_play]} --machine $first_machine"
+  echo "public url: $(public_url)"
+  echo "control plane: $ssh_cmd"
+  if [[ -n $(on "$first" <<<'command -v k3s || true') ]]; then
+    echo "k3s: $ssh_cmd -- kubectl get nodes"
+  else
+    echo "k3s: not installed, run: $0 k3s"
+  fi
 }
 
 down() {
+  local title
+  load_ids
+  for title in "${!ids[@]}"; do
+    {
+      labctl playground stop "${ids[$title]}" >/dev/null 2>&1 && log "$title: stopped (${ids[$title]})" || : >"$tmp/failed"
+    } &
+  done
+  wait_all
+}
+
+destroy() {
   local id title state
   load_ids
   while read -r id title state; do
@@ -327,6 +361,8 @@ case "${1:-}:${2:-}" in
   check:) require_running; check ;;
   status:) status ;;
   down:) down ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  restart:) require_existing; start_vms; connect_vms; check ;;
+  destroy:) destroy ;;
+  *) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" >&2; exit 2 ;;
 esac
-[[ ${1:-} != up ]] || log "done in ${SECONDS}s"
+[[ ${1:-} != up && ${1:-} != restart ]] || log "done in ${SECONDS}s"
