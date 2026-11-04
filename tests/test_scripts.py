@@ -30,6 +30,7 @@ case "$1 $2" in
     if [[ $SCENARIO == destroy_failure ]]; then
       echo 'Simulated deletion failure' >&2; exit 1
     fi ;;
+  'playground stop'|'playground restart'|'playground lifetime'|'playground persist') ;;
   'ssh '*)
     script=$(cat)
     bash -n <<<"$script" || exit 1
@@ -41,6 +42,7 @@ case "$1 $2" in
     fi ;;
   'expose list') echo 'port http://vm:8080 https://example.test';
     echo 'port http://vm-01:8080 https://example.test' ;;
+  *) echo "Unexpected labctl command: $*" >&2; exit 2 ;;
 esac
 '''
 
@@ -129,6 +131,26 @@ class ScriptTests(unittest.TestCase):
                 self.assertIn("Done in", result.stderr)
                 self.assertNotIn("mock-join-token", result.stderr)
                 self.assertIn("playground persist id5", calls)
+                ssh_calls = [line for line in calls.splitlines() if line.startswith("ssh ")]
+                node_count = 15 if script.stem == "15vm" else 5
+                self.assertEqual(len(ssh_calls), 3 * node_count + 3)
+                self.assertTrue(all(" -- sudo bash -s" in line for line in ssh_calls))
+                self.assertNotIn("ssh-proxy", calls)
+                if node_count == 15:
+                    self.assertTrue(all(" --machine vm-" in line for line in ssh_calls))
+
+    def test_mock_rejects_uppercase_ssh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            mock = base / "labctl"
+            mock.write_text(MOCK)
+            result = subprocess.run(
+                ["bash", str(mock), "SSH", "id1"],
+                env=dict(os.environ, CALLS=str(base / "calls")),
+                text=True, capture_output=True, timeout=5,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Unexpected labctl command: SSH", result.stderr)
 
 
 if __name__ == "__main__":
