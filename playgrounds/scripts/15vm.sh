@@ -16,6 +16,9 @@
 # Public URL changes, and restart updates the VMs with the new one.
 set -euo pipefail
 
+# Parse the entire file before any playground operations.
+bash -n "$0"
+
 manifest="$(dirname "$0")/../manifests/15vm.yaml"
 prefix=node
 playgrounds=5
@@ -162,7 +165,7 @@ start_vms() {
       else
         created_id=$(labctl playground start flexbox -f "$manifest" --title "$play" --quiet 2>"$tmp/$play.start.log") &&
           [[ -n $created_id ]] && log "$play: Started ($created_id)"
-      fi || { sed 's/^/  /' "$tmp/$play.start.log" 2>/dev/null >&2; : >"$tmp/failed"; }
+      fi || { sed 's/^/  /' "$tmp/$play.start.log" >&2 2>/dev/null; : >"$tmp/failed"; }
     } &
   done
   wait_all
@@ -229,7 +232,13 @@ SCRIPT
   # Expose the port once, a re-run reuses the same URL.
   step "Expose or reuse the tunnel port"
   url=$(public_url)
-  [[ -n $url ]] || url=$(labctl expose port "${ids[$first_play]}" "$port" --machine "$first_machine" --public | tail -1)
+  if [[ -z $url ]]; then
+    if ! url=$(labctl expose port "${ids[$first_play]}" "$port" --machine "$first_machine" --public 2>"$tmp/expose.log" | tail -1); then
+      log "Failed to expose the tunnel port"
+      sed 's/^/  /' "$tmp/expose.log" >&2
+      exit 1
+    fi
+  fi
   [[ $url == https://* || $url == http://* ]] || { log "Invalid public URL: $url"; exit 1; }
   log "Public URL: $url"
   step "Configure the VPN server and clients"

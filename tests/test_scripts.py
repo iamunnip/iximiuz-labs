@@ -18,7 +18,7 @@ case "$1 $2" in
       duplicate)
         echo 'id1 flexbox node-01 RUNNING'
         echo 'id2 flexbox node-01 STOPPED' ;;
-      running|persist_failure)
+      running|persist_failure|expose_new)
         for i in {1..5}; do printf 'id%s flexbox node-%02d RUNNING\n' "$i" "$i"; done ;;
       *)
         echo 'id1 flexbox node-01 RUNNING'
@@ -49,8 +49,11 @@ case "$1 $2" in
     elif [[ $script == *'cat /data/k3s/server/node-token'* ]]; then
       echo 'mock-join-token'
     fi ;;
-  'expose list') echo 'port http://vm:8080 https://example.test';
+  'expose list')
+    [[ $SCENARIO != expose_new ]] || exit 0
+    echo 'port http://vm:8080 https://example.test';
     echo 'port http://vm-01:8080 https://example.test' ;;
+  'expose port') echo 'HTTP port exposed (raw progress)' >&2; echo 'https://example.test' ;;
   *) echo "Unexpected labctl command: $*" >&2; exit 2 ;;
 esac
 '''
@@ -212,6 +215,25 @@ class ScriptTests(unittest.TestCase):
                     else:
                         self.assertNotIn("Step: Access", result.stderr)
                         self.assertTrue(result.stderr.rstrip().endswith(completion))
+
+    def test_new_exposure_progress_is_captured(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script.name):
+                result, calls = self.run_script(script, "expose_new", "start")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("expose port id1", calls)
+                self.assertNotIn("raw progress", result.stderr)
+                self.assertIn("  Public URL: https://example.test", result.stderr)
+                self.assertIn("Step: Completed setting up VMs", result.stderr)
+
+    def test_invalid_file_is_rejected_before_labctl(self):
+        with tempfile.TemporaryDirectory() as directory:
+            invalid = Path(directory) / "invalid.sh"
+            invalid.write_text(SCRIPTS[0].read_text() + "\n;;\n")
+            result, calls = self.run_script(invalid, "running", "start")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("syntax error", result.stderr)
+            self.assertEqual(calls, "")
 
     def test_mock_rejects_uppercase_ssh(self):
         with tempfile.TemporaryDirectory() as directory:

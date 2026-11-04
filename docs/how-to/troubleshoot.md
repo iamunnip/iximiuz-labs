@@ -13,3 +13,9 @@ Every task heading shows elapsed seconds; detail lines use two-space indentation
 Lifecycle commands capture raw CLI progress so parallel operations do not mix terminal rendering with script messages. If deletion fails, the output includes the playground name, ID, and captured error. Resolve the error and rerun `destroy` to remove remaining playgrounds.
 
 Use lowercase `labctl ssh` to connect. The final access command selects the WireGuard hub: `node-01` for 5 VMs or `node-01-vm-01` with `--machine vm-01` for 15 VMs. No additional local proxy process is required.
+
+## Syntax error after an operation
+
+Both scripts validate their full Bash syntax before contacting playgrounds. If a local copy reports an unexpected token, run `bash -n ./15vm.sh` (or `bash -n ./5vm.sh`) and replace the file with a complete copy of the current script. Keep the script file unchanged while it runs.
+
+If connectivity checks succeeded before the error, keep the existing VMs. After correcting the file, run `check` to verify the network and print the hub access command; provisioning again is unnecessary.
