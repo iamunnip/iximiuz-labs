@@ -65,7 +65,7 @@ load_ids() { # remember the ids of running and stopped playgrounds, by title
   done <<<"$rows"
 }
 vpn_ip() { echo "10.8.0.$(($1 + 1))"; } # by index, node-01 is 10.8.0.1
-on() { labctl SSH "${ids[$1]}" -- sudo bash -s; } # run the script on stdin as root
+on() { labctl ssh "${ids[$1]}" -- sudo bash -s; } # Run the script on stdin as root
 throttle() { while (($(jobs -rp | wc -l) >= parallel)); do wait -n || true; done; }
 on_bg() { # like on, but in the background. usage: on_bg <node> [output file]
   local node=$1 out=${2:-} script
