@@ -11,10 +11,10 @@ Both setups manage `node-01` through `node-05`. Use one setup per account and ch
 From the repository root, run:
 
 ```bash
-playgrounds/scripts/5vm.sh up
+playgrounds/scripts/5vm.sh start
 ```
 
-Watch the timestamped steps as the script starts playgrounds, enables persistence, installs networking tools, and configures the VPN. Successful completion includes `All 5 VMs connected`.
+Watch the timestamped steps as the script starts playgrounds, enables persistence, installs networking tools, and configures the VPN. Successful completion includes `Step: Completed setting up VMs` and `All 5 VMs connected`. The final `Step: Access to hub VM` section provides a `labctl ssh` command for `node-01`, the WireGuard hub. Each heading includes total elapsed seconds, with two-space indentation for detail lines.
 
 ## Inspect and check the network
 
@@ -30,8 +30,10 @@ playgrounds/scripts/5vm.sh check
 Stop the playgrounds while retaining their persistent disks:
 
 ```bash
-playgrounds/scripts/5vm.sh down
+playgrounds/scripts/5vm.sh stop
 ```
+
+When stopping succeeds, the script prints a timestamped `Step: Completed stopping playgrounds; disks retained` heading.
 
 When you need them again, run:
 

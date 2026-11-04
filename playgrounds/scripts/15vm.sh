@@ -4,13 +4,13 @@
 # A WebSocket tunnel on a public port of node-01-VM-01, and all traffic between VMs goes via it.
 #
 # Usage:
-#   15vm.sh up [--k3s]   Start the VMs and connect them, optionally install K3s
-#   15vm.sh k3s          Install K3s on running VMs
-#   15vm.sh check        Test the network from the first and the last VM
-#   15vm.sh status       Show the VMs and how to connect to the control plane
-#   15vm.sh down         Stop the VMs and keep their disks
-#   15vm.sh restart      Start stopped VMs and reconnect them
-#   15vm.sh destroy      Delete the VMs and their data
+#   15vm.sh start [--k3s]  Start the VMs and connect them, optionally install K3s
+#   15vm.sh k3s            Install K3s on running VMs
+#   15vm.sh check          Test the network from the first and the last VM
+#   15vm.sh status         Show the VMs and how to connect to the control plane
+#   15vm.sh stop           Stop the VMs and keep their disks
+#   15vm.sh restart        Start stopped VMs and reconnect them
+#   15vm.sh destroy        Delete the VMs and their data
 #
 # Every command except destroy is safe to re-run. A restart loses the public port, so the
 # Public URL changes, and restart updates the VMs with the new one.
@@ -84,7 +84,14 @@ on_bg() { # like on, but in the background. usage: on_bg <node> [output file]
   {
     local try
     for try in 1 2 3; do # an SSH session can drop, the scripts are safe to repeat
-      if [[ -n $out ]]; then on "$node" <<<"$script" >"$out"; else on "$node" <<<"$script" >&2; fi && { log "$node: Remote step completed"; exit 0; }
+      if on "$node" <<<"$script" >"${out:-$tmp/$node.remote.log}" 2>"$tmp/$node.remote.err"; then
+        if [[ -z $out ]]; then sed 's/^/  /' "$tmp/$node.remote.log" >&2; fi
+        sed 's/^/  /' "$tmp/$node.remote.err" >&2
+        log "$node: Remote step completed"
+        exit 0
+      fi
+      sed 's/^/  /' "$tmp/$node.remote.err" >&2
+      if [[ -z $out ]]; then sed 's/^/  /' "$tmp/$node.remote.log" >&2; fi
       log "$node: Attempt $try failed"
       sleep 3
     done
@@ -95,22 +102,47 @@ wait_all() { # wait for background jobs, stop if any of them failed
   wait
   [[ ! -e $tmp/failed ]] || { log "Stopping, see the failures above"; exit 1; }
 }
-log() { printf '[%ss] %s\n' "$SECONDS" "$*" >&2; }
-step() { log "Step: $*"; }
+log() { printf '  %s\n' "$*" >&2; }
+step_started=false
+step() {
+  [[ $step_started == false ]] || printf '\n' >&2
+  printf '[%ss] Step: %s\n' "$SECONDS" "$*" >&2
+  step_started=true
+}
+
+run_task() {
+  local label=$1 output=$2
+  shift 2
+  if "$@" >"$output" 2>&1; then
+    log "$label"
+  else
+    log "$label: Failed"
+    sed 's/^/  /' "$output" >&2
+    return 1
+  fi
+}
+
+show_connections() {
+  [[ -n ${ids[$first_play]:-} ]] || return 0
+  step "Access to hub VM"
+  printf '  %s: labctl ssh %s --machine %s\n' "$first" "${ids[$first_play]}" "$first_machine" >&2
+}
 
 require_running() {
+  step "Verify playgrounds are running"
   local play
   load_ids
   for play in "${plays[@]}"; do
-    [[ -n ${ids[$play]:-} ]] || { log "$play is not running, run: $0 up"; exit 1; }
+    [[ -n ${ids[$play]:-} ]] || { log "$play is not running, run: $0 start"; exit 1; }
   done
 }
 
 require_existing() {
+  step "Verify playgrounds exist"
   local item
   load_ids
   for item in "${plays[@]}"; do
-    [[ -n ${ids[$item]:-}${stopped[$item]:-} ]] || { log "$item does not exist, run: $0 up"; exit 1; }
+    [[ -n ${ids[$item]:-}${stopped[$item]:-} ]] || { log "$item does not exist, run: $0 start"; exit 1; }
   done
 }
 
@@ -126,11 +158,11 @@ start_vms() {
     throttle
     {
       if [[ -n ${stopped[$play]:-} ]]; then
-        labctl playground restart "${stopped[$play]}" >/dev/null && log "$play: Restarted (${stopped[$play]})"
+        run_task "$play: Restarted (${stopped[$play]})" "$tmp/$play.restart.log" labctl playground restart "${stopped[$play]}"
       else
-        created_id=$(labctl playground start flexbox -f "$manifest" --title "$play" --quiet) &&
+        created_id=$(labctl playground start flexbox -f "$manifest" --title "$play" --quiet 2>"$tmp/$play.start.log") &&
           [[ -n $created_id ]] && log "$play: Started ($created_id)"
-      fi || : >"$tmp/failed"
+      fi || { sed 's/^/  /' "$tmp/$play.start.log" 2>/dev/null >&2; : >"$tmp/failed"; }
     } &
   done
   wait_all
@@ -141,8 +173,14 @@ start_vms() {
   for play in "${plays[@]}"; do
     [[ -n ${ids[$play]:-} ]] || { log "$play: Not running after startup"; exit 1; }
     {
-      labctl playground lifetime "${ids[$play]}" "$lifetime" >/dev/null &&
-        labctl playground persist "${ids[$play]}" >/dev/null || : >"$tmp/failed"
+      if { labctl playground lifetime "${ids[$play]}" "$lifetime" &&
+           labctl playground persist "${ids[$play]}"; } >"$tmp/$play.lifecycle.log" 2>&1; then
+        log "$play: Lifetime $lifetime; persistent"
+      else
+        log "$play: Failed to set lifetime or persistence"
+        sed 's/^/  /' "$tmp/$play.lifecycle.log" >&2
+        : >"$tmp/failed"
+      fi
     } &
   done
   wait_all
@@ -218,7 +256,7 @@ $hosts
 HOSTS
 "
 
-  on "$first" <<SCRIPT
+  on "$first" <<SCRIPT 2>&1 | sed 's/^/  /' >&2
 set -euo pipefail
 echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-vpn.conf
 sysctl -q --system
@@ -300,7 +338,6 @@ failed=\$(
 SCRIPT
   done
   wait_all
-  log "All $count VMs connected"
 }
 
 install_k3s() {
@@ -327,7 +364,7 @@ SCRIPT
   done
   wait_all
   step "Wait for all K3s nodes to become Ready"
-  on "$first" <<SCRIPT
+  on "$first" <<SCRIPT 2>&1 | sed 's/^/  /' >&2
 set -e
 for _ in \$(seq 1 90); do
   [[ \$(k3s kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready') == $count ]] && break
@@ -341,30 +378,37 @@ SCRIPT
 
 status() {
   step "Show playground status"
-  local ssh_cmd
-  labctl playground list | awk -v p="^$prefix-0[1-5]\$" 'NR == 1 || ($3 ~ p && !/DESTROYED|TERMINATED|FAILED/)' | cut -c1-100
+  local title ssh_cmd
   load_ids
+  for title in "${plays[@]}"; do
+    if [[ -n ${ids[$title]:-} ]]; then
+      log "$title: Running (${ids[$title]})"
+    elif [[ -n ${stopped[$title]:-} ]]; then
+      log "$title: Stopped (${stopped[$title]})"
+    else
+      log "$title: Not created"
+    fi
+  done
   if [[ -z ${ids[$first_play]:-} ]]; then
-    if [[ -n ${stopped[$first_play]:-} ]]; then echo "Stopped, run: $0 restart"; else echo "Not created, run: $0 up"; fi
+    if [[ -n ${stopped[$first_play]:-} ]]; then log "Hub stopped, run: $0 restart"; else log "Hub not created, run: $0 start"; fi
     return
   fi
   ssh_cmd="labctl ssh ${ids[$first_play]} --machine $first_machine"
-  echo "Public URL: $(public_url)"
-  echo "Control plane: $ssh_cmd"
+  log "Public URL: $(public_url)"
   if [[ -n $(on "$first" <<<'command -v k3s || true') ]]; then
-    echo "K3s: $ssh_cmd -- sudo k3s kubectl get nodes"
+    log "K3s: $ssh_cmd -- sudo k3s kubectl get nodes"
   else
-    echo "K3s: not installed, run: $0 k3s"
+    log "K3s: Not installed, run: $0 k3s"
   fi
 }
 
-down() {
+stop() {
   step "Stop playgrounds and retain their disks"
   local title
   load_ids
   for title in "${!ids[@]}"; do
     {
-      labctl playground stop "${ids[$title]}" >/dev/null && log "$title: Stopped (${ids[$title]})" || : >"$tmp/failed"
+      run_task "$title: Stopped (${ids[$title]})" "$tmp/$title.stop.log" labctl playground stop "${ids[$title]}" </dev/null || : >"$tmp/failed"
     } &
   done
   wait_all
@@ -377,7 +421,13 @@ destroy() {
   for title in "${!ids[@]}" "${!stopped[@]}"; do
     id=${ids[$title]:-${stopped[$title]}}
     {
-      labctl playground destroy "$id" </dev/null && log "$title: Destroyed ($id)" || : >"$tmp/failed"
+      if labctl playground destroy "$id" </dev/null >"$tmp/$title.destroy.log" 2>&1; then
+        log "$title: Destroyed ($id)"
+      else
+        log "$title: Failed to destroy ($id)"
+        sed 's/^/  /' "$tmp/$title.destroy.log" >&2
+        : >"$tmp/failed"
+      fi
     } &
   done
   wait_all
@@ -397,14 +447,32 @@ esac
 command -v labctl >/dev/null || { log "Missing dependency: labctl"; exit 1; }
 
 case "${1:-}:${2:-}" in
-  up:) start_vms; connect_vms; check ;;
-  up:--k3s) start_vms; connect_vms; check; install_k3s ;;
+  start:) start_vms; connect_vms; check ;;
+  start:--k3s) start_vms; connect_vms; check; install_k3s ;;
   k3s:) require_running; install_k3s ;;
   check:) require_running; check ;;
   status:) status ;;
-  down:) down ;;
+  stop:) stop ;;
   restart:) require_existing; start_vms; connect_vms; check ;;
   destroy:) destroy ;;
   *) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" >&2; exit 2 ;;
 esac
-[[ ${1:-} != up && ${1:-} != restart ]] || log "Done in ${SECONDS}s"
+case ${1:-} in
+  start|restart)
+    step "Completed setting up VMs"
+    log "All $count VMs connected"
+    show_connections ;;
+  check)
+    step "Completed connectivity check"
+    log "All $count VMs connected"
+    show_connections ;;
+  k3s)
+    step "Completed installing K3s"
+    log "All $count K3s nodes are Ready"
+    show_connections ;;
+  status)
+    step "Completed checking playground status"
+    show_connections ;;
+  stop) step "Completed stopping playgrounds; disks retained" ;;
+  destroy) step "Completed deleting playgrounds and their data" ;;
+esac
