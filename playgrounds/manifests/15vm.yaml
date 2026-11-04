@@ -1,8 +1,8 @@
-# three ubuntu 26.04 vms, each with a 20 GiB os disk and a 60 GiB data disk on /data.
-# totals: 10 vcpu, 16 GiB ram, 240 GiB disk, which are the per playground limits.
-# 100 GiB per vm is rejected, as 300 GiB is over the 240 GiB limit.
+# Three Ubuntu 26.04 VMs, each with a 20 GiB OS disk and a 60 GiB data disk on /data.
+# Totals: 10 vCPU, 16 GiB RAM, 240 GiB disk, which are the per playground limits.
+# 100 GiB per VM is rejected, as 300 GiB is over the 240 GiB limit.
 kind: playground
-name: 15vm-ubuntu26-4c6g-4c6g-2c4g-os20g-data60g
+name: 15vm
 title: Ubuntu 26.04, 3 VMs, 10 vCPU, 16 GiB RAM, 240 GiB disk
 description: Three Ubuntu 26.04 VMs with a 20 GiB OS disk and a 60 GiB data disk on /data. Two have 4 vCPU and 6 GiB RAM, one has 2 vCPU and 4 GiB RAM.
 playground:
