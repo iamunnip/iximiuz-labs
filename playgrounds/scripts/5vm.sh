@@ -38,8 +38,25 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 declare -A ids stopped
 
+fetch_playgrounds() {
+  local attempt
+  for attempt in 1 2 3; do
+    if labctl playground list >"$tmp/playgrounds.list" 2>"$tmp/playgrounds.err"; then
+      cat "$tmp/playgrounds.list"
+      return 0
+    fi
+    if ((attempt == 3)) || ! grep -Eqi 'status (429|500|502|503|504)|error code: (429|500|502|503|504)|timed? out|timeout|temporary failure|connection (reset|refused)|unexpected EOF' "$tmp/playgrounds.err"; then
+      log "Unable to list playgrounds; no further operations will run"
+      sed 's/^/  /' "$tmp/playgrounds.err" >&2
+      return 1
+    fi
+    log "Temporary playground-list failure (attempt $attempt/3); retrying in $((attempt * 2))s"
+    sleep "$((attempt * 2))"
+  done
+}
+
 list_plays() { # print "<id> <title> <RUNNING|STOPPED|BUSY>" for this setup, destroyed ones are left out
-  labctl playground list | awk -v p="^$prefix-[0-9]+\$" 'NR > 1 && $3 ~ p {
+  fetch_playgrounds | awk -v p="^$prefix-[0-9]+\$" 'NR > 1 && $3 ~ p {
     if (/DESTROYED|TERMINATED|FAILED/) next
     print $1, $3, (/RUNNING/ ? "RUNNING" : /STOPPED/ ? "STOPPED" : "BUSY")
   }' | while read -r id title state; do
@@ -378,7 +395,7 @@ SCRIPT
 
 status() {
   step "Show playground status"
-  local title ssh_cmd
+  local title ssh_cmd url k3s_path
   load_ids
   for title in "${nodes[@]}"; do
     if [[ -n ${ids[$title]:-} ]]; then
@@ -394,8 +411,18 @@ status() {
     return
   fi
   ssh_cmd="labctl ssh ${ids[$first]}"
-  log "Public URL: $(public_url)"
-  if [[ -n $(on "$first" <<<'command -v k3s || true') ]]; then
+  if ! url=$(public_url 2>"$tmp/status-url.err"); then
+    log "Failed to read the public tunnel URL"
+    sed 's/^/  /' "$tmp/status-url.err" >&2
+    return 1
+  fi
+  log "Public URL: ${url:-Not exposed}"
+  if ! k3s_path=$(on "$first" <<<'command -v k3s || true' 2>"$tmp/status-ssh.err"); then
+    log "Failed to inspect K3s on the hub VM"
+    sed 's/^/  /' "$tmp/status-ssh.err" >&2
+    return 1
+  fi
+  if [[ -n $k3s_path ]]; then
     log "K3s: $ssh_cmd -- sudo k3s kubectl get nodes"
   else
     log "K3s: Not installed, run: $0 k3s"
@@ -433,46 +460,52 @@ destroy() {
   wait_all
 }
 
-# Validate arguments before invoking labctl.
-if (($# > 2)); then
-  log "Too many arguments. Run $0 --help for usage."
-  exit 2
-fi
-case "${1:-}" in
-  -h|--help)
-    (($# == 1)) || { log "Help takes no arguments"; exit 2; }
-    awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
-    exit 0 ;;
-esac
-command -v labctl >/dev/null || { log "Missing dependency: labctl"; exit 1; }
+# Parse dispatch and completion together before any long-running operation.
+main() {
+  # Validate arguments before invoking labctl.
+  if (($# > 2)); then
+    log "Too many arguments. Run $0 --help for usage."
+    exit 2
+  fi
+  case "${1:-}" in
+    -h|--help)
+      (($# == 1)) || { log "Help takes no arguments"; exit 2; }
+      awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"
+      exit 0 ;;
+  esac
+  command -v labctl >/dev/null || { log "Missing dependency: labctl"; exit 1; }
 
-case "${1:-}:${2:-}" in
-  start:) start_vms; connect_vms; check ;;
-  start:--k3s) start_vms; connect_vms; check; install_k3s ;;
-  k3s:) require_running; install_k3s ;;
-  check:) require_running; check ;;
-  status:) status ;;
-  stop:) stop ;;
-  restart:) require_existing; start_vms; connect_vms; check ;;
-  destroy:) destroy ;;
-  *) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" >&2; exit 2 ;;
-esac
-case ${1:-} in
-  start|restart)
-    step "Completed setting up VMs"
-    log "All $count VMs connected"
-    show_connections ;;
-  check)
-    step "Completed connectivity check"
-    log "All $count VMs connected"
-    show_connections ;;
-  k3s)
-    step "Completed installing K3s"
-    log "All $count K3s nodes are Ready"
-    show_connections ;;
-  status)
-    step "Completed checking playground status"
-    show_connections ;;
-  stop) step "Completed stopping playgrounds; disks retained" ;;
-  destroy) step "Completed deleting playgrounds and their data" ;;
-esac
+  case "${1:-}:${2:-}" in
+    start:) start_vms; connect_vms; check ;;
+    start:--k3s) start_vms; connect_vms; check; install_k3s ;;
+    k3s:) require_running; install_k3s ;;
+    check:) require_running; check ;;
+    status:) status ;;
+    stop:) stop ;;
+    restart:) require_existing; start_vms; connect_vms; check ;;
+    destroy:) destroy ;;
+    *) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0" >&2; exit 2 ;;
+  esac
+  case ${1:-} in
+    start|restart)
+      step "Completed setting up VMs"
+      log "All $count VMs connected"
+      show_connections ;;
+    check)
+      step "Completed connectivity check"
+      log "All $count VMs connected"
+      show_connections ;;
+    k3s)
+      step "Completed installing K3s"
+      log "All $count K3s nodes are Ready"
+      show_connections ;;
+    status)
+      step "Completed checking playground status"
+      show_connections ;;
+    stop) step "Completed stopping playgrounds; disks retained" ;;
+    destroy) step "Completed deleting playgrounds and their data" ;;
+  esac
+}
+
+# Exit in the same parsed command list if the file is replaced during execution.
+main "$@"; exit "$?"

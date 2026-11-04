@@ -12,13 +12,25 @@ MOCK = r'''#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CALLS"
 case "$1 $2" in
   'playground list')
+    if [[ $SCENARIO == file_replaced && ! -e ${CALLS}.replaced ]]; then
+      cp "$REPLACEMENT" "$SCRIPT_SOURCE"
+      touch "${CALLS}.replaced"
+    fi
+    if [[ $SCENARIO == list_502 || ( $SCENARIO == list_transient && $(wc -l < "$CALLS") == 1 ) ]]; then
+      echo 'labctl: request failed with status 502: error code: 502' >&2
+      exit 1
+    fi
+    if [[ $SCENARIO == list_401 ]]; then
+      echo 'labctl: request failed with status 401' >&2
+      exit 1
+    fi
     echo 'ID TEMPLATE TITLE STATUS'
     case "$SCENARIO" in
       empty|start_failure) ;;
       duplicate)
         echo 'id1 flexbox node-01 RUNNING'
         echo 'id2 flexbox node-01 STOPPED' ;;
-      running|persist_failure|expose_new)
+      running|persist_failure|expose_new|list_transient|file_replaced)
         for i in {1..5}; do printf 'id%s flexbox node-%02d RUNNING\n' "$i" "$i"; done ;;
       *)
         echo 'id1 flexbox node-01 RUNNING'
@@ -41,6 +53,7 @@ case "$1 $2" in
     echo 'Persisting playground (raw progress)' >&2 ;;
   'playground stop'|'playground restart') echo 'Lifecycle raw progress' >&2 ;;
   'ssh '*)
+    if [[ $SCENARIO == status_ssh_failure ]]; then echo 'Simulated SSH failure' >&2; exit 1; fi
     script=$(cat)
     bash -n <<<"$script" || exit 1
     echo "$script" >> "$REMOTE"
@@ -50,6 +63,7 @@ case "$1 $2" in
       echo 'mock-join-token'
     fi ;;
   'expose list')
+    if [[ $SCENARIO == status_url_failure ]]; then echo 'Simulated expose-list failure' >&2; exit 1; fi
     [[ $SCENARIO != expose_new ]] || exit 0
     echo 'port http://vm:8080 https://example.test';
     echo 'port http://vm-01:8080 https://example.test' ;;
@@ -66,9 +80,19 @@ class ScriptTests(unittest.TestCase):
             mock = base / "labctl"
             mock.write_text(MOCK)
             mock.chmod(0o755)
+            sleep = base / "sleep"
+            sleep.write_text("#!/usr/bin/env bash\nexit 0\n")
+            sleep.chmod(0o755)
             calls, remote = base / "calls", base / "remote"
             env = dict(os.environ, PATH=f"{base}:{os.environ['PATH']}",
                        SCENARIO=scenario, CALLS=str(calls), REMOTE=str(remote))
+            if scenario == "file_replaced":
+                source = script.read_text()
+                script = base / script.name
+                script.write_text(source)
+                replacement = base / "replacement.sh"
+                replacement.write_text("# updated revision\n" * 2000 + source)
+                env.update(SCRIPT_SOURCE=str(script), REPLACEMENT=str(replacement))
             result = subprocess.run(["bash", str(script), *args], env=env,
                                     text=True, capture_output=True, timeout=15)
             return result, calls.read_text() if calls.exists() else ""
@@ -215,6 +239,44 @@ class ScriptTests(unittest.TestCase):
                     else:
                         self.assertNotIn("Step: Access", result.stderr)
                         self.assertTrue(result.stderr.rstrip().endswith(completion))
+
+    def test_status_does_not_hide_api_or_ssh_failures(self):
+        for script in SCRIPTS:
+            for scenario, error in (("status_url_failure", "Simulated expose-list failure"),
+                                    ("status_ssh_failure", "Simulated SSH failure")):
+                with self.subTest(script=script.name, scenario=scenario):
+                    result, _ = self.run_script(script, scenario, "status")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(error, result.stderr)
+                    self.assertNotIn("Completed checking", result.stderr)
+                    self.assertNotIn("Not installed", result.stderr)
+
+    def test_replacing_source_during_execution_does_not_break_completion(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script.name):
+                result, _ = self.run_script(script, "file_replaced", "start")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Step: Completed setting up VMs", result.stderr)
+                self.assertIn("Step: Access to hub VM", result.stderr)
+
+    def test_list_retries_transient_failure(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script.name):
+                result, calls = self.run_script(script, "list_transient", "start")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("retrying in 2s", result.stderr)
+                self.assertIn("Completed setting up VMs", result.stderr)
+                self.assertNotIn("playground start", calls)
+
+    def test_list_failure_does_not_mutate_playgrounds(self):
+        for script in SCRIPTS:
+            for scenario, attempts in (("list_502", 3), ("list_401", 1)):
+                with self.subTest(script=script.name, scenario=scenario):
+                    result, calls = self.run_script(script, scenario, "start")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(calls.splitlines(), ["playground list"] * attempts)
+                    self.assertIn("no further operations will run", result.stderr)
+                    self.assertNotIn("Completed setting up", result.stderr)
 
     def test_new_exposure_progress_is_captured(self):
         for script in SCRIPTS:
