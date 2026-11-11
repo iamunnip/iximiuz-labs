@@ -7,7 +7,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = sorted((ROOT / "playgrounds/scripts").glob("*.sh"))
+SCRIPTS = [ROOT / "playgrounds/scripts" / name for name in ("15vm.sh", "5vm.sh")]  # multi-playground VPN setups
 MOCK = r'''#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CALLS"
 case "$1 $2" in

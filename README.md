@@ -2,12 +2,12 @@
 
 Scripts for iximiuz Labs playgrounds.
 
-See [docs/](docs/README.md) for prerequisites, execution steps, architecture, and troubleshooting. Both setups use the same playground titles; use one setup at a time per account.
+See [docs/](docs/README.md) for prerequisites, execution steps, architecture, and troubleshooting. `5vm.sh` and `15vm.sh` use the same playground titles; use one of them at a time per account. `4vm.sh` uses its own title, `4vm`, and can run alongside either.
 
 ```
 playgrounds/
-  manifests/   5vm.yaml and 15vm.yaml
-  scripts/     5vm.sh and 15vm.sh
+  manifests/   4vm.yaml, 5vm.yaml and 15vm.yaml
+  scripts/     4vm.sh, 5vm.sh and 15vm.sh
 docs/          Tutorials, how-to guides, reference, and explanation
 tests/         Local script regression checks using a fake labctl
 ```
@@ -16,8 +16,31 @@ tests/         Local script regression checks using a fake labctl
 
 | Script | Manifest | What it builds |
 | --- | --- | --- |
+| `4vm.sh` | `4vm.yaml` | One playground with four VMs on its private network, with optional K3s and kubectl on `dev-machine` |
 | `5vm.sh` | `5vm.yaml` | Five single-VM playgrounds on one private network, with optional K3s |
 | `15vm.sh` | `15vm.yaml` | Five three-VM playgrounds, 15 VMs on one private network, with optional K3s |
+
+## 4vm.sh
+
+One playground, `4vm`, with four Ubuntu 26.04 VMs. Each VM has a single OS disk and no `/data` disk:
+
+| VM | vCPU | RAM | Disk |
+| --- | --- | --- | --- |
+| `dev-machine` | 1 | 1 GiB | 30 GiB |
+| `control-plane` | 3 | 5 GiB | 70 GiB |
+| `node-01` | 3 | 5 GiB | 70 GiB |
+| `node-02` | 3 | 5 GiB | 70 GiB |
+
+That is the most one playground allows: 10 vCPU, 16 GiB RAM and 240 GiB disk.
+
+It takes the same commands as `5vm.sh`. The VMs share the playground network, so there is no VPN or public port. iximiuz Labs already names every VM in `/etc/hosts`, so `ping node-02` works from any of them.
+
+With `--k3s`, `control-plane` runs the K3s server, `node-01` and `node-02` run agents with the `node` role, and `dev-machine` gets a matching `kubectl` and the admin kubeconfig for `laborant`. It is a minimal install, without Traefik and ServiceLB. K3s data stays in its default place, `/var/lib/rancher/k3s`. Commands finish with the `dev-machine` access command:
+
+```text
+[40s] Step: Access to dev-machine
+  dev-machine: labctl ssh <playground-id> --machine dev-machine
+```
 
 ## 5vm.sh
 

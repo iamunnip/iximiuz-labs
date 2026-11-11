@@ -35,4 +35,4 @@ flowchart TD
 | Reference | Look up specifications and command behavior | [Setups](reference/setups.md), [commands and execution output](reference/commands.md) |
 | Explanation | Understand the design | [Network architecture and K3s](explanation/architecture.md) |
 
-Both setups manage the playground titles `node-01` through `node-05`. Use one setup at a time per account.
+The 5 VM and 15 VM setups manage the playground titles `node-01` through `node-05`. Use one of them at a time per account. The 4 VM setup manages one playground titled `4vm`.
