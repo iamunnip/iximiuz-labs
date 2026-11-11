@@ -96,6 +96,12 @@ on() { # run the script on stdin as root on a node, named <play>-<machine>
   labctl ssh "${ids[${1%-vm-*}]}" --machine "${1#"${1%-vm-*}"-}" -- sudo bash -s
 }
 throttle() { while (($(jobs -rp | wc -l) >= parallel)); do wait -n || true; done; }
+on_logged() { # like on, but the remote stderr is indented under the current step
+  local rc=0
+  on "$1" 2>"$tmp/$1.logged.err" || rc=$?
+  sed 's/^/  /' "$tmp/$1.logged.err" >&2
+  return "$rc"
+}
 on_bg() { # like on, but in the background. usage: on_bg <node> [output file]
   local node=$1 out=${2:-} script
   script=$(cat)
@@ -369,7 +375,7 @@ SCRIPT
 install_k3s() {
   local node i token
   step "Install K3s on the control plane"
-  token=$(on "$first" <<SCRIPT | tail -1
+  token=$(on_logged "$first" <<SCRIPT | tail -1
 set -euo pipefail
 if ! systemctl is-active -q k3s; then
   curl -fsSL https://get.k3s.io | INSTALL_K3S_EXEC="server --node-name $first --node-ip $(vpn_ip 0) --advertise-address $(vpn_ip 0) --flannel-iface $iface --data-dir $k3s_data --write-kubeconfig-mode 600 --disable traefik --disable servicelb" sh - >/dev/null
@@ -384,7 +390,7 @@ SCRIPT
     on_bg "$node" <<SCRIPT
 set -euo pipefail
 if ! systemctl is-active -q k3s-agent; then
-  curl -fsSL https://get.k3s.io | K3S_URL=https://$(vpn_ip 0):6443 K3S_TOKEN=$token INSTALL_K3S_EXEC="agent --node-name $node --node-ip $(vpn_ip "$i") --flannel-iface $iface --data-dir $k3s_data" sh - >/dev/null
+  curl -fsSL https://get.k3s.io | K3S_URL=https://$(vpn_ip 0):6443 K3S_TOKEN=$token INSTALL_K3S_TYPE=exec INSTALL_K3S_EXEC="agent --node-name $node --node-ip $(vpn_ip "$i") --flannel-iface $iface --data-dir $k3s_data" sh - >/dev/null
 fi
 SCRIPT
   done
