@@ -2,7 +2,7 @@
 
 | Setup | Playgrounds | VMs | Resources per VM |
 | --- | --- | --- | --- |
-| [4 VMs](../../playgrounds/scripts/4vm.sh) | 1 | 4 | `dev-machine`: 1 vCPU, 1 GiB RAM, 30 GiB disk. `control-plane`, `node-01`, `node-02`: 3 vCPU, 5 GiB RAM, 70 GiB disk each. One OS disk per VM, no data disk. |
+| [4 VMs](../../playgrounds/scripts/4vm.sh) | 1 | 4 | `dev-machine`: 1 vCPU, 1 GiB RAM, 30 GiB disk. `node-1`, `node-2`, `node-3`: 3 vCPU, 5 GiB RAM, 70 GiB disk each. One OS disk per VM, no data disk. |
 | [5 VMs](../../playgrounds/scripts/5vm.sh) | 5 | 5 | 4 vCPU, 10 GiB RAM, 20 GiB OS disk, 80 GiB data disk |
 | [15 VMs](../../playgrounds/scripts/15vm.sh) | 5 | 15 | Two VMs per playground with 4 vCPU and 6 GiB RAM; one with 2 vCPU and 4 GiB RAM. Each has a 20 GiB OS disk and 60 GiB data disk. |
 

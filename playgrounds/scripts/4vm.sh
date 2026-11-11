@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# One playground, 4vm, with four VMs on its private network: dev-machine, control-plane,
-# node-01 and node-02. The VMs share the playground network, which already names them in
-# /etc/hosts, so no VPN is needed. The script can install K3s, with kubectl on dev-machine.
+# One playground, 4vm, with four VMs on its private network: dev-machine, node-1, node-2
+# and node-3. The VMs share the playground network, which already names them in
+# /etc/hosts, so no VPN is needed. The script can install K3s, with node-1 as the control
+# plane, node-2 and node-3 as nodes, and kubectl on dev-machine.
 #
 # Usage:
 #   4vm.sh start [--k3s]  Start the VMs and connect them, optionally install K3s
@@ -21,8 +22,8 @@ bash -n "$0"
 manifest="$(dirname "$0")/../manifests/4vm.yaml"
 title=4vm
 dev='dev-machine'
-server=control-plane
-agents=(node-01 node-02)
+server='node-1'
+agents=(node-2 node-3)
 nodes=("$dev" "$server" "${agents[@]}")
 count=${#nodes[@]}
 k3s_count=$((1 + ${#agents[@]}))

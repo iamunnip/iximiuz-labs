@@ -3,7 +3,7 @@
 kind: playground
 name: 4vm
 title: Ubuntu 26.04, 4 VMs, 10 vCPU, 16 GiB RAM, 240 GiB disk
-description: Four Ubuntu 26.04 VMs on one private network. dev-machine has 1 vCPU, 1 GiB RAM and 30 GiB disk. control-plane, node-01 and node-02 each have 3 vCPU, 5 GiB RAM and 70 GiB disk.
+description: Four Ubuntu 26.04 VMs on one private network. dev-machine has 1 vCPU, 1 GiB RAM and 30 GiB disk. node-1, node-2 and node-3 each have 3 vCPU, 5 GiB RAM and 70 GiB disk.
 playground:
   networks:
     - name: local
@@ -24,7 +24,7 @@ playground:
       resources:
         cpuCount: 1
         ramSize: 1GiB
-    - name: control-plane
+    - name: node-1
       users:
         - name: root
         - name: laborant
@@ -39,7 +39,7 @@ playground:
       resources:
         cpuCount: 3
         ramSize: 5GiB
-    - name: node-01
+    - name: node-2
       users:
         - name: root
         - name: laborant
@@ -54,7 +54,7 @@ playground:
       resources:
         cpuCount: 3
         ramSize: 5GiB
-    - name: node-02
+    - name: node-3
       users:
         - name: root
         - name: laborant
@@ -74,15 +74,15 @@ playground:
       kind: terminal
       name: dev-machine
       machine: dev-machine
-    - id: terminal-control-plane
+    - id: terminal-node-1
       kind: terminal
-      name: control-plane
-      machine: control-plane
-    - id: terminal-node-01
+      name: node-1
+      machine: node-1
+    - id: terminal-node-2
       kind: terminal
-      name: node-01
-      machine: node-01
-    - id: terminal-node-02
+      name: node-2
+      machine: node-2
+    - id: terminal-node-3
       kind: terminal
-      name: node-02
-      machine: node-02
+      name: node-3
+      machine: node-3
