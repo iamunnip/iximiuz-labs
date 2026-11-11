@@ -19,6 +19,17 @@ Run either `playgrounds/scripts/5vm.sh` or `playgrounds/scripts/15vm.sh` with on
 
 `start` and `restart` set a 24-hour lifetime and enable persistence. Restarting can change the public tunnel URL; use `restart` to update the clients. Repeating `start` reuses running playgrounds, existing VPN keys, and an existing exposed port.
 
+## 4vm.sh
+
+`4vm.sh` takes the same commands and uses the same output format, for one playground titled `4vm`. Other titles are left alone. Differences:
+
+- There is no VPN or public port. The VMs reach each other by name through the `/etc/hosts` entries that iximiuz Labs writes.
+- `check` pings `control-plane`, `node-01` and `node-02` from `dev-machine`.
+- `start --k3s` and `k3s` add a final K3s step, `Set up kubectl on dev-machine`, which installs the `kubectl` version that matches K3s and copies the kubeconfig to `laborant`. The kubeconfig is never printed.
+- `status` shows the one playground and whether K3s is installed on `control-plane`.
+- The access section is `Step: Access to dev-machine`, with `labctl ssh <playground-id> --machine dev-machine`.
+- `stop` and `destroy` finish with `Completed stopping the playground; disks retained` and `Completed deleting the playground and its data`.
+
 ## Execution output
 
 Steps and per-VM progress go to standard error, with a blank line between tasks. Every step header shows the elapsed time. Detail lines are indented by two spaces and have no timestamp. The timer continues running internally and the completion header reports the total setup duration. Lifetime and persistence commands produce one result per playground; their detailed output is printed if an operation fails. Deletion also captures each command’s output and shows one indented result per playground, preserving diagnostics on failure. Successful deletion ends with a timestamped `Step: Completed deleting playgrounds and their data` header showing the total elapsed time. For example, `start` reports these stages (times and URLs vary):
