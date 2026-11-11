@@ -106,10 +106,10 @@ class FourVmTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("playground start", calls)
         for step in ("Check connectivity from dev-machine",
-                     "Install K3s on control-plane", "Install K3s agents", "Wait for all K3s nodes",
+                     "Install K3s on node-1", "Install K3s agents", "Wait for all K3s nodes",
                      "Set up kubectl on dev-machine", "Completed setting up VMs"):
             self.assertIn("Step: " + step, result.stderr)
-        self.assertIn("K3S_URL=https://control-plane:6443", remote)
+        self.assertIn("K3S_URL=https://node-1:6443", remote)
         self.assertIn("INSTALL_K3S_TYPE=exec", remote)
         self.assertIn("dl.k8s.io/release/v1.33.5", remote)
         self.assertNotIn("mock-join-token", result.stderr)

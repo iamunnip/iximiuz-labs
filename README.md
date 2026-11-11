@@ -27,15 +27,15 @@ One playground, `4vm`, with four Ubuntu 26.04 VMs. Each VM has a single OS disk 
 | VM | vCPU | RAM | Disk |
 | --- | --- | --- | --- |
 | `dev-machine` | 1 | 1 GiB | 30 GiB |
-| `control-plane` | 3 | 5 GiB | 70 GiB |
-| `node-01` | 3 | 5 GiB | 70 GiB |
-| `node-02` | 3 | 5 GiB | 70 GiB |
+| `node-1` | 3 | 5 GiB | 70 GiB |
+| `node-2` | 3 | 5 GiB | 70 GiB |
+| `node-3` | 3 | 5 GiB | 70 GiB |
 
 That is the most one playground allows: 10 vCPU, 16 GiB RAM and 240 GiB disk.
 
-It takes the same commands as `5vm.sh`. The VMs share the playground network, so there is no VPN or public port. iximiuz Labs already names every VM in `/etc/hosts`, so `ping node-02` works from any of them.
+It takes the same commands as `5vm.sh`. The VMs share the playground network, so there is no VPN or public port. iximiuz Labs already names every VM in `/etc/hosts`, so `ping node-3` works from any of them.
 
-With `--k3s`, `control-plane` runs the K3s server, `node-01` and `node-02` run agents with the `node` role, and `dev-machine` gets a matching `kubectl` and the admin kubeconfig for `laborant`. It is a minimal install, without Traefik and ServiceLB. K3s data stays in its default place, `/var/lib/rancher/k3s`. Commands finish with the `dev-machine` access command:
+With `--k3s`, `node-1` runs the K3s server with the `control-plane` role, `node-2` and `node-3` run agents with the `node` role, and `dev-machine` gets a matching `kubectl` and the admin kubeconfig for `laborant`. It is a minimal install, without Traefik and ServiceLB. K3s data stays in its default place, `/var/lib/rancher/k3s`. Commands finish with the `dev-machine` access command:
 
 ```text
 [40s] Step: Access to dev-machine

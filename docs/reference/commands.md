@@ -24,9 +24,9 @@ Run either `playgrounds/scripts/5vm.sh` or `playgrounds/scripts/15vm.sh` with on
 `4vm.sh` takes the same commands and uses the same output format, for one playground titled `4vm`. Other titles are left alone. Differences:
 
 - There is no VPN or public port. The VMs reach each other by name through the `/etc/hosts` entries that iximiuz Labs writes.
-- `check` pings `control-plane`, `node-01` and `node-02` from `dev-machine`.
+- `check` pings `node-1`, `node-2` and `node-3` from `dev-machine`.
 - `start --k3s` and `k3s` add a final K3s step, `Set up kubectl on dev-machine`, which installs the `kubectl` version that matches K3s and copies the kubeconfig to `laborant`. The kubeconfig is never printed.
-- `status` shows the one playground and whether K3s is installed on `control-plane`.
+- `status` shows the one playground and whether K3s is installed on `node-1`, the control plane.
 - The access section is `Step: Access to dev-machine`, with `labctl ssh <playground-id> --machine dev-machine`.
 - `stop` and `destroy` finish with `Completed stopping the playground; disks retained` and `Completed deleting the playground and its data`.
 
